@@ -1,117 +1,203 @@
 // SPDX-License-Identifier: MIT
-pragma solidity  ^0.8.20;
+pragma solidity ^0.8.20;
 
-import "./FortuneNXTStorage.sol";
+import "../libraries/AppStorageLib.sol";
+import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
-/**
- * @title MatrixFacet
- * @dev Facet for matrix-related logic in the Diamond pattern.
- */
-contract MatrixFacet is FortuneNXTStorage {
-    event MatrixIncomePaid(address indexed recipient, address indexed from, uint256 amount, uint256 slotNumber, uint256 level);
-    event Rebirth(address indexed user, uint256 oldSlotNumber, uint256 newSlotNumber);
+contract MatrixFacet {
+    event UserRegistered(
+        address indexed user,
+        address indexed referrer,
+        uint256 slot
+    );
+    event SlotPurchased(address indexed user, uint256 slot, uint256 priceCORE);
+    event UserPlaced(
+        address indexed user,
+        uint256 slot,
+        address indexed underReferrer,
+        uint8 level
+    );
 
-    /**
-     * @dev Places a user in the matrix and processes matrix income.
-     * @param _user Address of the user
-     * @param _slotNumber Slot number
-     */
-    function processMatrixPlacement(address _user, uint256 _slotNumber) external {
-        // Find a matrix to place the user in
-        address upline = _findMatrixUpline(_user, _slotNumber);
-
-        if (upline != address(0)) {
-            Matrix storage uplineMatrix = users[upline].matrices[_slotNumber];
-
-            // Place in level 1 if there's space
-            if (uplineMatrix.level1.length < 2) {
-                uplineMatrix.level1.push(_user);
-
-                // Pay matrix income to upline (25% of slot value)
-                uint256 matrixIncome = slots[_slotNumber].price * MATRIX_INCOME_PERCENT / 100 * 25 / 100;
-                _payMatrixIncome(upline, _user, matrixIncome, _slotNumber, 1);
-            }
-            // Place in level 2 if there's space
-            else if (uplineMatrix.level2.length < 4) {
-                uplineMatrix.level2.push(_user);
-
-                // Pay matrix income to upline (50% of slot value)
-                uint256 matrixIncome = slots[_slotNumber].price * MATRIX_INCOME_PERCENT / 100 * 50 / 100;
-
-                // Check if this is position 4 or 6 (last two positions in level 2)
-                if (uplineMatrix.level2.length == 3 || uplineMatrix.level2.length == 4) {
-                    // Trigger rebirth instead of payment
-                    _processRebirth(upline, _slotNumber, matrixIncome);
-                } else {
-                    // Regular payment for positions 3 and 5
-                    _payMatrixIncome(upline, _user, matrixIncome, _slotNumber, 2);
-                }
-
-                // Check if matrix is now complete
-                if (uplineMatrix.level2.length == 4) {
-                    uplineMatrix.completed = true;
-                }
-            }
-        }
+    modifier onlyRegistered() {
+        AppStorageLib.AppStorage storage s = AppStorageLib.diamondStorage();
+        require(s.users[msg.sender].isActive, "User not registered");
+        _;
     }
 
-    // Internal helper functions (copied from implementation for modularity)
-    function _findMatrixUpline(address _user, uint256 _slotNumber) internal view returns (address upline) {
-        address referrer = users[_user].referrer;
-        if (referrer != address(0) && _hasActiveSlot(referrer, _slotNumber)) {
-            Matrix storage referrerMatrix = users[referrer].matrices[_slotNumber];
-            if (!referrerMatrix.completed) {
-                return referrer;
-            }
-        }
-        for (uint256 i = 0; i < slotParticipants[_slotNumber].length; i++) {
-            address participant = slotParticipants[_slotNumber][i];
-            Matrix storage participantMatrix = users[participant].matrices[_slotNumber];
-            if (!participantMatrix.completed) {
-                return participant;
-            }
-        }
-        return owner;
+    function register(address referrer, uint256 slot) external {
+        AppStorageLib.AppStorage storage s = AppStorageLib.diamondStorage();
+        require(!s.users[msg.sender].isActive, "Already registered");
+        require(
+            s.users[referrer].isActive || referrer == s.adminWallet,
+            "Invalid referrer"
+        );
+        require(slot > 0 && slot <= s.maxSlotLevel, "Invalid slot");
+
+        // Price in USD
+        uint256 priceUSD = s.slots[slot].priceUSD;
+        require(priceUSD > 0, "Slot not priced");
+
+        uint256 coreAmount = _getCOREAmount(s, priceUSD);
+        require(
+            s.token.transferFrom(msg.sender, address(this), coreAmount),
+            "Payment failed"
+        );
+
+        // 3% admin fee
+        uint256 adminFee = (coreAmount * 3) / 100;
+        require(
+            s.token.transfer(s.adminWallet, adminFee),
+            "Admin fee transfer failed"
+        );
+
+        s.totalUsers++;
+        s.totalVolume += coreAmount;
+
+        AppStorageLib.User storage user = s.users[msg.sender];
+        user.referrer = referrer;
+        user.joinedAt = block.timestamp;
+        user.isActive = true;
+        user.activeSlots.push(slot);
+
+        s.registered[msg.sender] = true;
+        s.slotParticipants[slot].push(msg.sender);
+
+        // Place in matrix
+        _placeInMatrix(s, msg.sender, slot);
+
+        // Register referral
+        s.users[referrer].directReferrals++;
+
+        emit UserRegistered(msg.sender, referrer, slot);
+        emit SlotPurchased(msg.sender, slot, coreAmount);
     }
 
-    function _hasActiveSlot(address _user, uint256 _slotNumber) internal view returns (bool) {
-        User storage user = users[_user];
+    function buySlot(uint256 slot) external onlyRegistered {
+        AppStorageLib.AppStorage storage s = AppStorageLib.diamondStorage();
+        AppStorageLib.User storage user = s.users[msg.sender];
+
+        require(slot > 0 && slot <= s.maxSlotLevel, "Invalid slot");
+        require(!_hasSlot(user, slot), "Slot already active");
+
+        uint256 priceUSD = s.slots[slot].priceUSD;
+        require(priceUSD > 0, "Slot not priced");
+
+        uint256 coreAmount = _getCOREAmount(s, priceUSD);
+        require(
+            s.token.transferFrom(msg.sender, address(this), coreAmount),
+            "Payment failed"
+        );
+
+        // 3% admin fee
+        uint256 adminFee = (coreAmount * 3) / 100;
+        require(
+            s.token.transfer(s.adminWallet, adminFee),
+            "Admin fee transfer failed"
+        );
+
+        s.totalVolume += coreAmount;
+        user.activeSlots.push(slot);
+        s.slotParticipants[slot].push(msg.sender);
+
+        // Place in matrix
+        _placeInMatrix(s, msg.sender, slot);
+
+        emit SlotPurchased(msg.sender, slot, coreAmount);
+    }
+
+    // ----------------- Internal Utilities ----------------------
+
+    function _placeInMatrix(
+        AppStorageLib.AppStorage storage s,
+        address user,
+        uint256 slot
+    ) internal {
+        address ref = s.users[user].referrer;
+
+        // Search for eligible referrer in matrix tree
+        address placedUnder = _findAvailablePosition(s, ref, slot);
+        AppStorageLib.MatrixNode storage matrix = s.users[placedUnder].matrices[
+            slot
+        ];
+
+        if (matrix.level1.length < 2) {
+            matrix.level1.push(user);
+            emit UserPlaced(user, slot, placedUnder, 1);
+        } else {
+            // Place into one of level2
+            address[] storage level1 = matrix.level1;
+            for (uint8 i = 0; i < level1.length; i++) {
+                AppStorageLib.MatrixNode storage subMatrix = s
+                    .users[level1[i]]
+                    .matrices[slot];
+                if (subMatrix.level1.length < 2) {
+                    subMatrix.level1.push(user);
+                    emit UserPlaced(user, slot, level1[i], 2);
+                    return;
+                }
+            }
+            revert("No available position in matrix");
+        }
+
+        s.users[user].matrices[slot] = AppStorageLib.MatrixNode({
+            owner: user,
+            level1: new address,
+            level2: new address,
+            completed: false,
+            earnings: 0,
+            createdAt: block.timestamp
+        });
+    }
+
+    function _findAvailablePosition(
+        AppStorageLib.AppStorage storage s,
+        address ref,
+        uint256 slot
+    ) internal view returns (address) {
+        // If referrer's matrix is not initialized
+        if (s.users[ref].matrices[slot].owner == address(0)) {
+            return ref;
+        }
+
+        AppStorageLib.MatrixNode storage refMatrix = s.users[ref].matrices[
+            slot
+        ];
+        if (refMatrix.level1.length < 2) return ref;
+
+        for (uint8 i = 0; i < refMatrix.level1.length; i++) {
+            address sub = refMatrix.level1[i];
+            if (s.users[sub].matrices[slot].level1.length < 2) {
+                return sub;
+            }
+        }
+
+        return ref;
+    }
+
+    function _hasSlot(
+        AppStorageLib.User storage user,
+        uint256 slot
+    ) internal view returns (bool) {
         for (uint256 i = 0; i < user.activeSlots.length; i++) {
-            if (user.activeSlots[i] == _slotNumber) {
+            if (user.activeSlots[i] == slot) {
                 return true;
             }
         }
         return false;
     }
 
-    function _payMatrixIncome(
-        address _recipient,
-        address _from,
-        uint256 _amount,
-        uint256 _slotNumber,
-        uint256 _level
-    ) internal {
-        uint256 adminFee = _amount * ADMIN_FEE_PERCENT / 100;
-        uint256 netAmount = _amount - adminFee;
-        users[_recipient].matrixEarnings += netAmount;
-        users[_recipient].totalEarnings += netAmount;
-        users[_recipient].matrices[_slotNumber].earnings += netAmount;
-        payable(_recipient).transfer(netAmount);
-        payable(treasury).transfer(adminFee);
-        emit MatrixIncomePaid(_recipient, _from, netAmount, _slotNumber, _level);
-    }
-
-    function _processRebirth(address _user, uint256 _slotNumber, uint256 _amount) internal {
-        uint256 nextSlotNumber = _slotNumber + 1;
-        if (nextSlotNumber <= 12 && !_hasActiveSlot(_user, nextSlotNumber)) {
-            users[_user].activeSlots.push(nextSlotNumber);
-            Matrix storage matrix = users[_user].matrices[nextSlotNumber];
-            matrix.owner = _user;
-            matrix.createdAt = block.timestamp;
-            slotParticipants[nextSlotNumber].push(_user);
-            emit Rebirth(_user, _slotNumber, nextSlotNumber);
+    function _getCOREAmount(
+        AppStorageLib.AppStorage storage s,
+        uint256 usdAmount
+    ) internal view returns (uint256) {
+        if (s.useChainlink && address(s.priceFeed) != address(0)) {
+            (, int256 price, , , ) = s.priceFeed.latestRoundData();
+            require(price > 0, "Invalid price feed");
+            uint256 corePrice = uint256(price); // 8 decimals
+            return (usdAmount * 1e18) / (corePrice * 1e10); // adjust to 18 decimals
         } else {
-            _payMatrixIncome(_user, address(0), _amount, _slotNumber, 2);
+            require(s.manualCOREPrice > 0, "Manual CORE price not set");
+            return (usdAmount * 1e18) / s.manualCOREPrice;
         }
     }
 }

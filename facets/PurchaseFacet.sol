@@ -1,89 +1,85 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-import "./FortuneNXTStorage.sol";
-
-import "./IPriceFeed.sol";
+import "../libraries/AppStorageLib.sol";
+import "../libraries/MatrixLib.sol";
+import "../interfaces/IPriceFeed.sol";
 
 /**
  * @title PurchaseFacet
- * @dev Facet for slot purchase logic in the Diamond pattern with dynamic pricing.
+ * @notice Handles additional slot purchases and matrix placement.
  */
-contract PurchaseFacet is FortuneNXTStorage {
-    event SlotPurchased(
+contract PurchaseFacet {
+    using AppStorageLib for AppStorageLib.AppStorage;
+    using MatrixLib for AppStorageLib.MatrixNode;
+    using MatrixLib for AppStorageLib.User;
+
+    event SlotPurchased(address indexed user, uint256 slotId);
+    event MatrixPlaced(
         address indexed user,
-        uint256 slotNumber,
-        uint256 price
+        address indexed placedUnder,
+        uint256 slotId
     );
 
     /**
-     * @dev Purchases a slot for the user.
-     * @param _slotNumber Slot number to purchase (1-12)
+     * @notice Allows an active user to purchase a new slot
+     * @param _slotId The ID of the slot to purchase
      */
-    function purchaseSlot(uint256 _slotNumber) external payable {
-        require(users[msg.sender].isActive, "User not registered");
-        require(_slotNumber >= 1 && _slotNumber <= 12, "Invalid slot number");
-        require(slots[_slotNumber].active, "Slot not active");
+    function purchaseSlot(uint256 _slotId) external payable {
+        AppStorageLib.AppStorage storage s = AppStorageLib.diamondStorage();
+        address user = msg.sender;
 
-        User storage user = users[msg.sender];
+        require(s.users[user].isActive, "User not registered");
+        require(s.slots[_slotId].active, "Invalid slot");
+        require(!_hasActiveSlot(s.users[user], _slotId), "Slot already active");
 
-        // Enforce sequential slot purchase
-        if (_slotNumber > 1) {
-            bool hasPreviousSlot = false;
-            for (uint256 i = 0; i < user.activeSlots.length; i++) {
-                if (user.activeSlots[i] == _slotNumber - 1) {
-                    hasPreviousSlot = true;
-                    break;
-                }
-            }
-            require(hasPreviousSlot, "Must purchase previous slot first");
-        }
+        // Calculate price using Chainlink
+        uint256 slotPriceUSD = s.slots[_slotId].priceUSD;
+        uint256 slotPriceCORE = s.priceFeed.usdToNative(slotPriceUSD);
+        require(msg.value >= slotPriceCORE, "Insufficient payment");
 
-        // Check if slot already purchased
-        for (uint256 i = 0; i < user.activeSlots.length; i++) {
-            require(
-                user.activeSlots[i] != _slotNumber,
-                "Slot already purchased"
-            );
-        }
+        // Admin fee (3%)
+        uint256 adminFee = (msg.value * s.ADMIN_FEE_PERCENT) / 100;
+        (bool sentFee, ) = payable(s.adminWallet).call{value: adminFee}("");
+        require(sentFee, "Admin fee transfer failed");
 
-        // Get current Core Coin price from price feed
-        uint256 coreCoinPrice = priceFeed.getLatestPrice();
-        require(coreCoinPrice > 0, "Invalid Core Coin price");
+        uint256 remaining = msg.value - adminFee;
+        s.totalVolume += msg.value;
 
-        // Calculate slot price in Core Coin units
-        // Assuming slots[_slotNumber].price is in USD with 18 decimals
-        // Adjust calculation if your price units differ
-        uint256 slotPriceUSD = slots[_slotNumber].price;
-        uint256 slotPriceCoreCoin = (slotPriceUSD * 1e18) / coreCoinPrice;
+        // Activate slot
+        s.users[user].activeSlots.push(_slotId);
 
-        // Add pool extra percent
-        uint256 totalPrice = slotPriceCoreCoin +
-            ((slotPriceCoreCoin * POOL_EXTRA_PERCENT) / 100);
-
-        require(msg.value >= totalPrice, "Insufficient payment");
-
-        // Update user active slots
-        user.activeSlots.push(_slotNumber);
-
-        // Update matrix ownership
-        Matrix storage matrix = user.matrices[_slotNumber];
-        matrix.owner = msg.sender;
+        // Matrix setup
+        AppStorageLib.MatrixNode storage matrix = s.users[user].matrices[
+            _slotId
+        ];
+        matrix.owner = user;
         matrix.createdAt = block.timestamp;
 
-        // Add user to slot participants
-        slotParticipants[_slotNumber].push(msg.sender);
+        // Matrix placement logic
+        address placement = MatrixLib.findAvailableUpline(user, _slotId, s);
+        uint256 levelPlaced = s.users[placement].matrices[_slotId].placeChild(
+            user
+        );
+        require(levelPlaced > 0, "Matrix placement failed");
 
-        // Update pool balances
-        uint256 poolAmount = (slotPriceCoreCoin * POOL_EXTRA_PERCENT) / 100;
-        poolBalances[_slotNumber] += poolAmount;
-        totalPoolBalance += poolAmount;
+        s.slotParticipants[_slotId].push(user);
 
-        emit SlotPurchased(msg.sender, _slotNumber, slotPriceCoreCoin);
+        emit SlotPurchased(user, _slotId);
+        emit MatrixPlaced(user, placement, _slotId);
+    }
 
-        // Refund excess payment
-        if (msg.value > totalPrice) {
-            payable(msg.sender).transfer(msg.value - totalPrice);
+    /// @notice Checks if a user already has a given slot
+    function _hasActiveSlot(
+        AppStorageLib.User storage user,
+        uint256 slotId
+    ) internal view returns (bool) {
+        for (uint256 i = 0; i < user.activeSlots.length; i++) {
+            if (user.activeSlots[i] == slotId) {
+                return true;
+            }
         }
+        return false;
     }
 }
+// Compare this snippet from facets/UserViewFacet.sol:
