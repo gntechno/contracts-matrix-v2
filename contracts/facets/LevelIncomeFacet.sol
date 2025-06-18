@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-import "../libraries/AppStorageLib.sol";
+import "../libraries/LibAppStorage.sol";
 
 contract LevelIncomeFacet {
     using AppStorageLib for AppStorageLib.AppStorage;
@@ -13,7 +13,7 @@ contract LevelIncomeFacet {
         address user
     ) external view returns (bool[] memory levelEligibility) {
         AppStorageLib.AppStorage storage s = AppStorageLib.diamondStorage();
-        levelEligibility = new bool; // index 1–50 used
+        levelEligibility = new bool[](51); // index 1–50 used
 
         if (!s.users[user].isActive) return levelEligibility;
 
@@ -37,8 +37,8 @@ contract LevelIncomeFacet {
     {
         AppStorageLib.AppStorage storage s = AppStorageLib.diamondStorage();
 
-        directRequired = new uint256;
-        percentBasisPoints = new uint256;
+        directRequired = new uint256[](51); // index 1–50 used
+        percentBasisPoints = new uint256[](51); // index 1–50 used
 
         for (uint256 i = 1; i <= 50; i++) {
             AppStorageLib.LevelRequirement memory req = s.levelRequirements[i];
@@ -85,7 +85,7 @@ contract LevelIncomeFacet {
         address user
     ) external view returns (address[] memory uplines) {
         AppStorageLib.AppStorage storage s = AppStorageLib.diamondStorage();
-        uplines = new address;
+        uplines = new address[](50);
 
         address current = s.users[user].referrer;
         for (uint256 i = 0; i < 50 && current != address(0); i++) {

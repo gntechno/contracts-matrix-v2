@@ -8,7 +8,8 @@ import "@chainlink/contracts/src/v0.8/shared/interfaces/AggregatorV3Interface.so
  * @notice Handles dynamic CORE/USD pricing for slot purchases in Fortunity NXT
  */
 contract PriceFeedFacet {
-    bytes32 internal constant PRICE_FEED_STORAGE_POSITION = keccak256("fortunity.nxt.pricefeed.storage");
+    bytes32 internal constant PRICE_FEED_STORAGE_POSITION =
+        keccak256("fortunity.nxt.pricefeed.storage");
 
     struct PriceFeedStorage {
         AggregatorV3Interface corePriceFeed;
@@ -29,7 +30,11 @@ contract PriceFeedFacet {
 
     // Events
     event PriceUpdated(uint256 newPrice, uint256 timestamp);
-    event SlotPriceUpdated(uint256 slotId, uint256 newCorePrice, uint256 usdPrice);
+    event SlotPriceUpdated(
+        uint256 slotId,
+        uint256 newCorePrice,
+        uint256 usdPrice
+    );
     event DynamicPricingToggled(bool enabled);
 
     // Modifiers
@@ -39,7 +44,10 @@ contract PriceFeedFacet {
     }
 
     // Initialization
-    function initializePriceFeed(address _corePriceFeed, address _admin) external {
+    function initializePriceFeed(
+        address _corePriceFeed,
+        address _admin
+    ) external {
         PriceFeedStorage storage ds = ps();
         require(ds.priceFeedAdmin == address(0), "Already initialized");
 
@@ -49,18 +57,18 @@ contract PriceFeedFacet {
         ds.dynamicPricingEnabled = true;
 
         ds.slotPricesUSD = [
-            uint256(5 * 10**8),
-            10 * 10**8,
-            20 * 10**8,
-            40 * 10**8,
-            80 * 10**8,
-            160 * 10**8,
-            320 * 10**8,
-            640 * 10**8,
-            1280 * 10**8,
-            2560 * 10**8,
-            5120 * 10**8,
-            10240 * 10**8
+            uint256(5 * 10 ** 8),
+            10 * 10 ** 8,
+            20 * 10 ** 8,
+            40 * 10 ** 8,
+            80 * 10 ** 8,
+            160 * 10 ** 8,
+            320 * 10 ** 8,
+            640 * 10 ** 8,
+            1280 * 10 ** 8,
+            2560 * 10 ** 8,
+            5120 * 10 ** 8,
+            10240 * 10 ** 8
         ];
 
         _updateCorePrice();
@@ -75,7 +83,11 @@ contract PriceFeedFacet {
         }
 
         try ds.corePriceFeed.latestRoundData() returns (
-            uint80, int256 answer, , uint256 updatedAt, 
+            uint80 /*roundId*/,
+            int256 answer,
+            uint256 /*startedAt*/,
+            uint256 updatedAt,
+            uint80 /*answeredInRound*/
         ) {
             require(answer > 0, "Invalid price");
             require(block.timestamp - updatedAt < 3600, "Stale price");
@@ -92,7 +104,8 @@ contract PriceFeedFacet {
     function _updateCorePrice() internal {
         PriceFeedStorage storage ds = ps();
 
-        if (block.timestamp - ds.lastPriceUpdate < ds.priceUpdateInterval) return;
+        if (block.timestamp - ds.lastPriceUpdate < ds.priceUpdateInterval)
+            return;
 
         uint256 price = getCurrentCorePrice();
         ds.cachedCorePrice = price;
@@ -118,17 +131,28 @@ contract PriceFeedFacet {
         return ps().slotPricesUSD[slotId - 1];
     }
 
-    function getAllSlotPricesInCore() external view returns (uint256[12] memory prices) {
+    function getAllSlotPricesInCore()
+        external
+        view
+        returns (uint256[12] memory prices)
+    {
         for (uint256 i = 1; i <= 12; i++) {
             prices[i - 1] = getSlotPriceInCore(i);
         }
     }
 
-    function getAllSlotPricesInUSD() external view returns (uint256[12] memory) {
+    function getAllSlotPricesInUSD()
+        external
+        view
+        returns (uint256[12] memory)
+    {
         return ps().slotPricesUSD;
     }
 
-    function updateSlotPriceUSD(uint256 slotId, uint256 newUSDPrice) external onlyPriceFeedAdmin {
+    function updateSlotPriceUSD(
+        uint256 slotId,
+        uint256 newUSDPrice
+    ) external onlyPriceFeedAdmin {
         require(slotId >= 1 && slotId <= 12, "Invalid slot");
         require(newUSDPrice > 0, "Price must be positive");
 
@@ -140,12 +164,16 @@ contract PriceFeedFacet {
     }
 
     // Config
-    function setDynamicPricingEnabled(bool enabled) external onlyPriceFeedAdmin {
+    function setDynamicPricingEnabled(
+        bool enabled
+    ) external onlyPriceFeedAdmin {
         ps().dynamicPricingEnabled = enabled;
         emit DynamicPricingToggled(enabled);
     }
 
-    function setPriceUpdateInterval(uint256 interval) external onlyPriceFeedAdmin {
+    function setPriceUpdateInterval(
+        uint256 interval
+    ) external onlyPriceFeedAdmin {
         require(interval >= 60, "Too short");
         ps().priceUpdateInterval = interval;
     }
@@ -155,7 +183,9 @@ contract PriceFeedFacet {
         ps().priceFeedAdmin = newAdmin;
     }
 
-    function setManualCorePrice(uint256 manualPrice) external onlyPriceFeedAdmin {
+    function setManualCorePrice(
+        uint256 manualPrice
+    ) external onlyPriceFeedAdmin {
         require(manualPrice > 0, "Invalid price");
         PriceFeedStorage storage ds = ps();
         ds.cachedCorePrice = manualPrice;
@@ -187,6 +217,8 @@ contract PriceFeedFacet {
     }
 
     function needsPriceUpdate() external view returns (bool) {
-        return (block.timestamp - ps().lastPriceUpdate) >= ps().priceUpdateInterval;
+        return
+            (block.timestamp - ps().lastPriceUpdate) >=
+            ps().priceUpdateInterval;
     }
 }

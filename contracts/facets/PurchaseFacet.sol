@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-import "../libraries/AppStorageLib.sol";
+import "../libraries/LibAppStorage.sol";
 import "../libraries/MatrixLib.sol";
 import "../interfaces/IPriceFeed.sol";
 
@@ -39,7 +39,7 @@ contract PurchaseFacet {
         require(msg.value >= slotPriceCORE, "Insufficient payment");
 
         // Admin fee (3%)
-        uint256 adminFee = (msg.value * s.ADMIN_FEE_PERCENT) / 100;
+        uint256 adminFee = (msg.value * AppStorageLib.ADMIN_FEE_PERCENT) / 100;
         (bool sentFee, ) = payable(s.adminWallet).call{value: adminFee}("");
         require(sentFee, "Admin fee transfer failed");
 

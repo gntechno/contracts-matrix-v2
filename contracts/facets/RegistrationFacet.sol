@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-import "../libraries/AppStorageLib.sol";
+import "../libraries/LibAppStorage.sol";
 import "../libraries/MatrixLib.sol";
 import "../interfaces/IPriceFeed.sol";
 
@@ -43,11 +43,11 @@ contract RegistrationFacet {
         require(msg.value >= slotPriceCORE, "Insufficient CORE sent");
 
         // Admin fee deduction (3%)
-        uint256 adminFee = (msg.value * s.ADMIN_FEE_PERCENT) / 100;
+        uint256 adminFee = (msg.value * AppStorageLib.ADMIN_FEE_PERCENT) / 100;
         (bool feeSent, ) = payable(s.adminWallet).call{value: adminFee}("");
         require(feeSent, "Admin fee transfer failed");
 
-        uint256 remaining = msg.value - adminFee;
+        //uint256 remaining = msg.value - adminFee;
         s.totalVolume += msg.value;
 
         // Register user
@@ -65,7 +65,11 @@ contract RegistrationFacet {
         matrix.createdAt = block.timestamp;
 
         // Matrix placement logic
-        address placement = MatrixLib.findAvailableUpline(user, _slotId, s);
+        address placement = MatrixLib.findAvailableUpline(
+            user,
+            uint8(_slotId),
+            s
+        );
         uint256 levelPlaced = s.users[placement].matrices[_slotId].placeChild(
             user
         );

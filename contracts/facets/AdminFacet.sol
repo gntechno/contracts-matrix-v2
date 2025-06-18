@@ -2,7 +2,7 @@
 pragma solidity ^0.8.20;
 
 import "@openzeppelin/contracts/access/extensions/AccessControlEnumerable.sol";
-import "../lib/AppStorageLib.sol";
+import "../libraries/LibAppStorage.sol";
 import "../interfaces/IPriceFeed.sol";
 
 /**

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-import "../libraries/AppStorageLib.sol";
+import "../libraries/LibAppStorage.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 contract MatrixFacet {
@@ -141,8 +141,8 @@ contract MatrixFacet {
 
         s.users[user].matrices[slot] = AppStorageLib.MatrixNode({
             owner: user,
-            level1: new address,
-            level2: new address,
+            level1: new address[](0),
+            level2: new address[](0),
             completed: false,
             earnings: 0,
             createdAt: block.timestamp
