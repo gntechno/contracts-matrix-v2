@@ -1,18 +1,24 @@
-// contracts/scripts/deploy.js
-const { ethers } = require("hardhat");
+
+// scripts/deploy.js
+// Deploys the FortuneNXTDiamond contract and saves its address to .env
+
+const hre = require("hardhat");
+const { saveAddressToEnv } = require("../scripts/saveAddressToEnv");
 
 async function main() {
-  const MyContract = await ethers.getContractFactory("MyContract");
-  const myContract = await MyContract.deploy("Hello, Hardhat!");
+  const Diamond = await hre.ethers.getContractFactory("FortuneNXTDiamond");
+  const diamond = await Diamond.deploy();
 
-  await myContract.deployed();
+  await diamond.waitForDeployment();
+  const address = await diamond.getAddress();
 
-  console.log("MyContract deployed to:", myContract.address);
+  console.log("✅ Diamond deployed at:", address);
+
+  // Save to .env
+  saveAddressToEnv("DIAMOND", address);
 }
 
-main()
-  .then(() => process.exit(0))
-  .catch((error) => {
-    console.error(error);
-    process.exit(1);
-  });
+main().catch((error) => {
+  console.error(error);
+  process.exitCode = 1;
+});
