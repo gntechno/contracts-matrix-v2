@@ -156,7 +156,7 @@ contract IncomeFacet {
                 // ❌ not eligible → send **entire amount** to admin wallet
                 require(
                     s.token.transfer(s.adminWallet, amount),
-                    "Unpaid level → admin failed"
+                    "Unpaid level Income Paid to  admin failed"
                 );
                 // (optional) emit a “missed payout” event for transparency
                 // emit MissedLevelPayout(user, ref, amount, level);
