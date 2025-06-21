@@ -61,7 +61,7 @@ contract IncomeFacet {
 
         emit MatrixPayout(user, receiver, netAmount, slot);
     }
-
+    /* 
     function _payLevelIncome(
         AppStorageLib.AppStorage storage s,
         address user,
@@ -100,6 +100,69 @@ contract IncomeFacet {
                 emit LevelPayout(user, ref, netAmount, level);
             }
 
+            ref = upline.referrer;
+        }
+    }
+
+ */
+    function _payLevelIncome(
+        AppStorageLib.AppStorage storage s,
+        address user,
+        uint256 totalAmount
+    ) internal {
+        address ref = s.users[user].referrer;
+
+        // iterate through 50 possible upline levels
+        for (uint256 level = 1; level <= 50; level++) {
+            if (ref == address(0)) break; // reached the root
+
+            AppStorageLib.User storage upline = s.users[ref];
+            AppStorageLib.LevelRequirement memory req = s.levelRequirements[
+                level
+            ];
+
+            // share for *this* level (in CORE)
+            uint256 amount = (totalAmount * req.percent) / 10_000; // bp → %
+            if (amount == 0) {
+                // skip unused table rows
+                ref = upline.referrer;
+                continue;
+            }
+
+            uint256 adminCut = (amount * ADMIN_FEE_PERCENT) / 100; // 3 %
+            uint256 netAmount = amount - adminCut; // 97 %
+            bool eligible = (req.percent > 0 &&
+                upline.directReferrals >= req.directRequired &&
+                upline.isActive);
+
+            if (eligible) {
+                // ✅ pay upline
+                require(
+                    s.token.transfer(ref, netAmount),
+                    "Level payout failed"
+                );
+                // ✅ admin fee
+                require(
+                    s.token.transfer(s.adminWallet, adminCut),
+                    "Admin fee failed"
+                );
+
+                // update stats
+                upline.levelEarnings += netAmount;
+                upline.totalEarnings += netAmount;
+
+                emit LevelPayout(user, ref, netAmount, level);
+            } else {
+                // ❌ not eligible → send **entire amount** to admin wallet
+                require(
+                    s.token.transfer(s.adminWallet, amount),
+                    "Unpaid level → admin failed"
+                );
+                // (optional) emit a “missed payout” event for transparency
+                // emit MissedLevelPayout(user, ref, amount, level);
+            }
+
+            // move to next upline
             ref = upline.referrer;
         }
     }
